@@ -108,7 +108,7 @@ def place_trade(type, volume, take_profit, relative_pips = false)
     "symbol" => PAIR_SYMBOL,
     "volume" => volume,
     "takeProfit" => take_profit,
-    "comment" => "LOTUS EA BETA TESTING"
+    "comment" => "LOTUS ZYMETH v1.0"
   }
 
   order_data = order_data.merge("takeProfitUnits": "RELATIVE_PIPS") if relative_pips
