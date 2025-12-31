@@ -22,6 +22,10 @@ TAKE_PROFIT_BUFFER = ENV['TAKE_PROFIT_BUFFER']
 INITIAL_LOT_SIZE = ENV['INITIAL_LOT_SIZE']
 PAIR_SYMBOL = ENV['PAIR_SYMBOL']
 
+# Dynamic scaling configuration
+GRID_SPACING_MULTIPLIER = (ENV['GRID_SPACING_MULTIPLIER'] || '0.5').to_f
+TP_BUFFER_MULTIPLIER = ENV['TP_BUFFER_MULTIPLIER'] ? ENV['TP_BUFFER_MULTIPLIER'].to_f : nil
+
 # Enhanced configuration
 ENABLE_ENHANCED_ANALYSIS = false  # Set to true to use enhanced analysis for trading
 
@@ -66,6 +70,28 @@ def calculate_rsi(prices, period=14)
   rs = avg_gain / avg_loss
   rsi = 100 - (100 / (1 + rs))
   rsi.round(2)
+end
+
+# Calculate Average True Range (ATR) for volatility measurement
+def calculate_atr(candles, period=14)
+  return nil if candles.nil? || candles.length < period + 1
+  
+  true_ranges = []
+  (1...candles.length).each do |i|
+    high = candles[i]['high'].to_f
+    low = candles[i]['low'].to_f
+    prev_close = candles[i-1]['close'].to_f
+        
+    tr1 = high - low
+    tr2 = (high - prev_close).abs
+    tr3 = (low - prev_close).abs
+        
+    true_ranges << [tr1, tr2, tr3].max
+  end
+  
+  # Simple moving average of true ranges
+  atr = true_ranges.last(period).sum / period.to_f
+  atr.round(4)
 end
 
 # Function to get candles for specified timeframe
@@ -140,32 +166,39 @@ def update_trade(position, take_profit)
   end
 end
 
-def update_trades
+def update_trades(atr = nil)
   positions = get_positions
   prices = positions.map{|p| p['openPrice']}.sum
-  take_profit = (prices / (positions.size)) + take_profit_buffer(first_position(positions)['type']).to_f
+  take_profit = (prices / (positions.size)) + take_profit_buffer(first_position(positions)['type'], atr).to_f
 
   positions.each do |position|
     update_trade(position, take_profit)
   end
 end
 
-def take_profit_buffer(trade_type)
-  tp_buffer = (TAKE_PROFIT_BUFFER || 2).to_f
+def take_profit_buffer(trade_type, atr = nil)
+  if atr && TP_BUFFER_MULTIPLIER
+    tp_buffer = atr * TP_BUFFER_MULTIPLIER
+    log("Using dynamic TP buffer: ATR=#{atr.round(4)}, multiplier=#{TP_BUFFER_MULTIPLIER}, buffer=#{tp_buffer.round(4)}")
+  else
+    tp_buffer = (TAKE_PROFIT_BUFFER || 2).to_f
+    log("Using fixed TP buffer: #{tp_buffer}")
+  end
   trade_type == 'POSITION_TYPE_BUY' ? tp_buffer : (0 - tp_buffer)
 end
 
 
 # Function to decide whether to place a trade
-def should_place_trade?(positions)
+def should_place_trade?(positions, atr = nil)
   latest_position = latest_position(positions)
-  next_potential_position = next_potential_position(positions)
+  next_potential_position = next_potential_position(positions, atr)
   next_potential_lot_size = first_position(positions)['volume'] * (positions.size + 1)
   latest_price = latest_position['currentPrice']
   trade_type = latest_position['type']
 
   if (trade_type == 'POSITION_TYPE_BUY' && next_potential_position > latest_price) || (trade_type == 'POSITION_TYPE_SELL' && next_potential_position < latest_price)
     log("EXECUTE TRADE -> PRICE: #{latest_price}, TYPE: #{trade_type}, LOT_SIZE: #{next_potential_lot_size}")
+    log("Dynamic grid spacing: Step=#{(atr ? (GRID_SPACING_MULTIPLIER * atr).round(2) : 10.0)} pips, Next price=#{next_potential_position}")
     return true
   else
     log("PRICE: #{latest_price}, NEXT POSITION: #{next_potential_position}, TIME: #{DateTime.now.strftime("%m/%d/%y %l:%M %p")}")
@@ -173,11 +206,18 @@ def should_place_trade?(positions)
   end
 end
 
-def next_potential_position(positions)
-  if latest_position(positions)['type'] == 'POSITION_TYPE_BUY'
-    latest_position(positions)['openPrice'] - (10 * (positions.size + 1))
+def next_potential_position(positions, atr = nil)
+  if atr
+    step = GRID_SPACING_MULTIPLIER * atr
   else
-    latest_position(positions)['openPrice'] + (10 * (positions.size + 1))
+    step = 10.0  # fallback to fixed spacing if ATR not available
+  end
+  step = step.round(2)
+  
+  if latest_position(positions)['type'] == 'POSITION_TYPE_BUY'
+    latest_position(positions)['openPrice'] - (step * (positions.size + 1))
+  else
+    latest_position(positions)['openPrice'] + (step * (positions.size + 1))
   end
 end
 
@@ -285,13 +325,18 @@ loop do
     $total_analysis_cycles += 1
     
     if positions.size > 0
-      if should_place_trade?(positions)
+      # Fetch 5m candles for ATR calculation
+      candles_5m = get_candles('5m')
+      atr = calculate_atr(candles_5m, 14) if candles_5m
+
+      if should_place_trade?(positions, atr)
         # Define variables for martingale trading
         trade_type = latest_position(positions)['type'] == 'POSITION_TYPE_BUY' ? 'ORDER_TYPE_BUY' : 'ORDER_TYPE_SELL'
         next_potential_lot_size = first_position(positions)['volume'] * (positions.size + 1)
-        take_profit = next_take_profit(positions, next_potential_position(positions))
+        next_entry_price = next_potential_position(positions, atr)
+        take_profit = next_take_profit(positions, next_entry_price)
         place_trade(trade_type, next_potential_lot_size, take_profit)
-        update_trades # update trades so positions will be accurate and tp will be calculated correctly
+        update_trades(atr) # update trades so positions will be accurate and tp will be calculated correctly
       end
     else
       # Run both old and new analysis for comparison
