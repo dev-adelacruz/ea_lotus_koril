@@ -403,7 +403,7 @@ loop do
       else
         # Use old system for trading (default - safe mode)
         if old_trade_type
-          place_trade(old_trade_type, initial_lot_size.to_f, 1000, true)
+          place_trade(old_trade_type, initial_lot_size.to_f, 100, true)
         end
       end
     end
