@@ -1,15 +1,25 @@
 [Unit]
-Description=Trading Bot Service
+Description=Lotus Koril Trading Bot Service
 After=network.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/ea_eth
-EnvironmentFile=/home/ubuntu/ea_eth/.env
-ExecStart=/usr/bin/bundle exec ruby /home/ubuntu/ea_eth/ea.rb
+WorkingDirectory=/opt/lotus-koril
+EnvironmentFile=/opt/lotus-koril/.env
+ExecStart=/usr/bin/bundle exec ruby /opt/lotus-koril/ea.rb
 Restart=on-failure
-RestartSec=5s
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lotus-koril
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/lotus-koril/logs
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
