@@ -6,6 +6,10 @@ module TradingBot
 
     # First trade take profit offset (changed from grid_spacing to $3)
     FIRST_TRADE_TP_OFFSET = 3.0
+    
+    # Dynamic spacing thresholds
+    LARGE_GRID_THRESHOLD = 10  # Number of levels to trigger larger spacing
+    LARGE_GRID_SPACING = 50.0  # Spacing when grid has >= 10 levels
 
     def initialize(config: EnvironmentConfig, api_client: nil)
       @config = config
@@ -13,6 +17,16 @@ module TradingBot
       @grid_spacing = config.grid_spacing
       @grid_levels = []  # Array of GridLevel objects, sorted by entry price (highest to lowest)
       @highest_entry_price = nil
+    end
+
+    # Get current grid spacing based on number of levels
+    # Returns $50 when grid has 10+ levels, otherwise returns configured spacing ($25)
+    def current_grid_spacing
+      if @grid_levels.size >= LARGE_GRID_THRESHOLD
+        LARGE_GRID_SPACING
+      else
+        @grid_spacing
+      end
     end
 
     # Initialize grid from existing positions
@@ -51,16 +65,16 @@ module TradingBot
     end
 
     # Calculate next entry price based on grid spacing
-    # Rule: Each new entry is $grid_spacing below the latest (lowest) entry
+    # Rule: Each new entry is current_grid_spacing below the latest (lowest) entry
     # When grid is empty, first trade should be placed immediately at current market price
     def calculate_next_entry_price(current_price = nil)
       if @grid_levels.empty?
         # First trade: place immediately at current market price
         return current_price
       else
-        # Subsequent trades: $grid_spacing below the lowest (most recent) entry price
+        # Subsequent trades: current_grid_spacing below the lowest (most recent) entry price
         lowest_entry = @grid_levels.map(&:entry_price).min
-        lowest_entry - @grid_spacing
+        lowest_entry - current_grid_spacing
       end
     end
 
@@ -215,7 +229,7 @@ module TradingBot
         else
           # Subsequent levels: TP = previous level's entry price
           previous_entry = sorted_levels[index - 1].entry_price
-          tp_offset = @grid_spacing  # Not used for levels > 1, but required parameter
+          tp_offset = current_grid_spacing  # Not used for levels > 1, but required parameter
         end
         
         level.calculate_take_profit(previous_entry, tp_offset)
@@ -239,7 +253,7 @@ module TradingBot
       else
         # Find the previous level's entry price
         previous_level = @grid_levels.find { |level| level.level_index == level_index - 1 }
-        previous_level ? previous_level.entry_price : entry_price + @grid_spacing
+        previous_level ? previous_level.entry_price : entry_price + current_grid_spacing
       end
     end
   end
