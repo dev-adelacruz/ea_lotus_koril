@@ -6,7 +6,7 @@ A Ruby-based automated trading bot implementing a buy-only grid trading strategy
 
 - **Buy-Only Grid Trading**: All trades are BUY orders with fixed $25 spacing
 - **Dynamic Take Profit Ladder**: 
-  - Trade 1 TP = Entry + $25
+  - Trade 1 TP = Entry + $3
   - Trade N TP = Entry price of Trade (N-1)
 - **Automatic Position Replacement**: When a position hits TP, it's replaced at the same entry price if market is still there
 - **SOLID Architecture**: Maintainable, testable codebase following software engineering best practices
@@ -86,7 +86,7 @@ The bot implements the following grid strategy:
 1. **First Trade**: BUY at current market price
 2. **Subsequent Trades**: Each new BUY is placed $25 below the previous entry
 3. **Take Profit Rules**:
-   - Trade 1: TP = Entry + $25
+   - Trade 1: TP = Entry + $3
    - Trade 2: TP = Trade 1 Entry price
    - Trade 3: TP = Trade 2 Entry price
    - ...and so on
@@ -96,7 +96,7 @@ The bot implements the following grid strategy:
 
 ```
 Market Price: 1000
-Trade 1: BUY @ 1000, TP @ 1025
+Trade 1: BUY @ 1000, TP @ 1003
 
 Price drops to 975:
 Trade 2: BUY @ 975, TP @ 1000 (Trade 1 entry)

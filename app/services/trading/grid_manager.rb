@@ -2,14 +2,17 @@ module TradingBot
   class GridManager
     class GridError < StandardError; end
 
-    attr_reader :grid_levels, :grid_spacing, :latest_entry_price
+    attr_reader :grid_levels, :grid_spacing, :highest_entry_price
+
+    # First trade take profit offset (changed from grid_spacing to $3)
+    FIRST_TRADE_TP_OFFSET = 3.0
 
     def initialize(config: EnvironmentConfig, api_client: nil)
       @config = config
       @api_client = api_client
       @grid_spacing = config.grid_spacing
       @grid_levels = []  # Array of GridLevel objects, sorted by entry price (highest to lowest)
-      @latest_entry_price = nil
+      @highest_entry_price = nil
     end
 
     # Initialize grid from existing positions
@@ -38,7 +41,7 @@ module TradingBot
         @grid_levels << level
       end
       
-      @latest_entry_price = @grid_levels.first&.entry_price
+      @highest_entry_price = @grid_levels.first&.entry_price
       
       # Recalculate take profits based on grid rules
       recalculate_take_profits
@@ -48,16 +51,16 @@ module TradingBot
     end
 
     # Calculate next entry price based on grid spacing
-    # Rule: Each new entry is $grid_spacing below the latest entry
+    # Rule: Each new entry is $grid_spacing below the latest (lowest) entry
     # When grid is empty, first trade should be placed immediately at current market price
     def calculate_next_entry_price(current_price = nil)
       if @grid_levels.empty?
         # First trade: place immediately at current market price
         return current_price
       else
-        # Subsequent trades: $grid_spacing below the highest entry price
-        highest_entry = @grid_levels.map(&:entry_price).max
-        highest_entry - @grid_spacing
+        # Subsequent trades: $grid_spacing below the lowest (most recent) entry price
+        lowest_entry = @grid_levels.map(&:entry_price).min
+        lowest_entry - @grid_spacing
       end
     end
 
@@ -72,9 +75,9 @@ module TradingBot
       # Add position to level
       level.add_position(position)
       
-      # Update latest entry price if this is a new highest level
-      if @grid_levels.empty? || entry_price > @latest_entry_price
-        @latest_entry_price = entry_price
+      # Update highest entry price if this is a new highest level
+      if @grid_levels.empty? || entry_price > @highest_entry_price
+        @highest_entry_price = entry_price
       end
       
       # Sort grid levels by entry price (highest to lowest)
@@ -206,14 +209,16 @@ module TradingBot
         level_index = index + 1
         
         if level_index == 1
-          # First level: TP = entry + grid_spacing
+          # First level: TP = entry + $3 (FIRST_TRADE_TP_OFFSET)
           previous_entry = nil
+          tp_offset = FIRST_TRADE_TP_OFFSET
         else
           # Subsequent levels: TP = previous level's entry price
           previous_entry = sorted_levels[index - 1].entry_price
+          tp_offset = @grid_spacing  # Not used for levels > 1, but required parameter
         end
         
-        level.calculate_take_profit(previous_entry, @grid_spacing)
+        level.calculate_take_profit(previous_entry, tp_offset)
       end
     end
 
@@ -229,8 +234,8 @@ module TradingBot
     # Calculate take profit for a specific level
     def calculate_take_profit_for_level(level_index, entry_price)
       if level_index == 1
-        # First level: TP = entry + grid_spacing
-        entry_price + @grid_spacing
+        # First level: TP = entry + $3 (FIRST_TRADE_TP_OFFSET)
+        entry_price + FIRST_TRADE_TP_OFFSET
       else
         # Find the previous level's entry price
         previous_level = @grid_levels.find { |level| level.level_index == level_index - 1 }
