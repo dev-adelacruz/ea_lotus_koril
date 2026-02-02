@@ -1,6 +1,6 @@
 # Lotus Koril Trading Bot
 
-A Ruby-based automated trading bot implementing a buy-only grid trading strategy for cryptocurrency (ETH/USD).
+A Ruby-based automated trading bot implementing a buy-only grid trading strategy for gold (XAU/USD).
 
 ## Features
 
@@ -72,7 +72,7 @@ app/
 | `ACCOUNT_ID` | Trading account ID | **Required** |
 | `REGION_BASE_URL` | API base URL | **Required** |
 | `REGION_MARKET_BASE_URL` | Market data API URL | **Required** |
-| `PAIR_SYMBOL` | Trading pair symbol | `ETHUSDm` |
+| `PAIR_SYMBOL` | Trading pair symbol | `XAUUSD-VIP` |
 | `GRID_SPACING` | Spacing between grid levels | `25.0` |
 | `LOT_SIZE` | Fixed lot size per trade | `0.01` |
 | `DRY_RUN` | Enable dry-run mode | `false` |
@@ -243,4 +243,4 @@ Logs are written to stdout with timestamps and log levels.
 
 ## Disclaimer
 
-This trading bot is for educational purposes. Use at your own risk. Past performance is not indicative of future results. Cryptocurrency trading involves significant risk of loss.
+This trading bot is for educational purposes. Use at your own risk. Past performance is not indicative of future results. Gold (XAU/USD) trading involves significant risk of loss.

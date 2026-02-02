@@ -29,7 +29,7 @@ module TradingBot
       end
 
       def pair_symbol
-        ENV['PAIR_SYMBOL'] || 'ETHUSDm'
+        ENV['PAIR_SYMBOL'] || 'XAUUSD-VIP'
       end
 
       # Grid trading configuration

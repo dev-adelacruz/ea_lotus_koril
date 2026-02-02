@@ -6,7 +6,7 @@ RSpec.describe TradingBot::Position do
     {
       'id' => '12345',
       'type' => 'POSITION_TYPE_BUY',
-      'symbol' => 'ETHUSDm',
+      'symbol' => 'XAUUSD-VIP',
       'openPrice' => 3000.0,
       'takeProfit' => 3025.0,
       'volume' => 0.01,
@@ -153,7 +153,7 @@ RSpec.describe TradingBot::Position do
       expect(result).to eq({
         'id' => '12345',
         'type' => 'POSITION_TYPE_BUY',
-        'symbol' => 'ETHUSDm',
+        'symbol' => 'XAUUSD-VIP',
         'openPrice' => 3000.0,
         'takeProfit' => 3025.0,
         'volume' => 0.01
@@ -164,7 +164,7 @@ RSpec.describe TradingBot::Position do
   describe '#to_s' do
     it 'returns string representation' do
       position = described_class.new(api_data)
-      expect(position.to_s).to eq('BUY ETHUSDm @ 3000.0, TP: 3025.0, Profit: 10.0')
+      expect(position.to_s).to eq('BUY XAUUSD-VIP @ 3000.0, TP: 3025.0, Profit: 10.0')
     end
   end
 end

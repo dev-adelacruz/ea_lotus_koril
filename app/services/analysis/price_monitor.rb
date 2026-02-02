@@ -9,7 +9,7 @@ module TradingBot
       @last_price = nil
       @price_history = []  # Simple history for basic analysis
       @max_history_size = 100
-      @simulated_price = 4881.0  # Starting price for dry-run simulation
+      @simulated_price = 2200.0  # Starting price for dry-run simulation (gold ~$2200)
     end
 
     # Get current price with caching

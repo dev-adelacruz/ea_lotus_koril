@@ -30,7 +30,7 @@ RSpec.describe TradingBot::GridLevel do
       {
         'id' => '123',
         'type' => 'POSITION_TYPE_BUY',
-        'symbol' => 'ETHUSDm',
+        'symbol' => 'XAUUSD-VIP',
         'openPrice' => 1000.0,
         'takeProfit' => 1025.0,
         'volume' => 0.01
@@ -117,9 +117,9 @@ RSpec.describe TradingBot::GridLevel do
     it 'returns lowest position ID when positions exist' do
       level = described_class.new(1000.0, 1)
       
-      position1 = TradingBot::Position.new('id' => '100', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'ETHUSDm', 'openPrice' => 1000.0)
-      position2 = TradingBot::Position.new('id' => '200', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'ETHUSDm', 'openPrice' => 1000.0)
-      position3 = TradingBot::Position.new('id' => '050', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'ETHUSDm', 'openPrice' => 1000.0)
+      position1 = TradingBot::Position.new('id' => '100', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'XAUUSD-VIP', 'openPrice' => 1000.0)
+      position2 = TradingBot::Position.new('id' => '200', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'XAUUSD-VIP', 'openPrice' => 1000.0)
+      position3 = TradingBot::Position.new('id' => '050', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'XAUUSD-VIP', 'openPrice' => 1000.0)
       
       level.add_position(position1)
       level.add_position(position2)
@@ -137,7 +137,7 @@ RSpec.describe TradingBot::GridLevel do
   describe '#to_s' do
     it 'returns string representation for active level' do
       level = described_class.new(1000.0, 1, 1025.0)
-      position = TradingBot::Position.new('id' => '123', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'ETHUSDm', 'openPrice' => 1000.0)
+      position = TradingBot::Position.new('id' => '123', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'XAUUSD-VIP', 'openPrice' => 1000.0)
       level.add_position(position)
       
       expect(level.to_s).to eq('Level 1: Entry=1000.0, TP=1025.0, ACTIVE (1 positions)')
@@ -153,7 +153,7 @@ RSpec.describe TradingBot::GridLevel do
   describe '#to_h' do
     it 'returns hash representation' do
       level = described_class.new(1000.0, 1, 1025.0)
-      position = TradingBot::Position.new('id' => '123', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'ETHUSDm', 'openPrice' => 1000.0)
+      position = TradingBot::Position.new('id' => '123', 'type' => 'POSITION_TYPE_BUY', 'symbol' => 'XAUUSD-VIP', 'openPrice' => 1000.0)
       level.add_position(position)
       
       result = level.to_h
