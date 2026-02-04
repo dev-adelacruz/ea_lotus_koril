@@ -107,6 +107,26 @@ module TradingBot
       end
     end
 
+    # Update a position's stop loss
+    # @param position_id [String] Position ID to update
+    # @param stop_loss [Float] New stop loss price
+    # @return [Hash, nil] API response or nil in dry-run mode
+    def update_position_stop_loss(position_id:, stop_loss:)
+      if dry_run
+        Logger.info("[DRY RUN] Would update position #{position_id} SL to #{stop_loss}")
+        return { 'dry_run' => true, 'action' => 'update_sl', 'position_id' => position_id, 'stop_loss' => stop_loss }
+      end
+
+      begin
+        response = api_client.update_position_stop_loss(position_id, stop_loss)
+        Logger.info("Updated position #{position_id} SL to #{stop_loss}: #{response}")
+        response
+      rescue ApiClient::ApiError => e
+        Logger.error_with_context(e, { position_id: position_id, stop_loss: stop_loss })
+        raise TradeError, "Failed to update position SL: #{e.message}"
+      end
+    end
+
     # Update take profits for multiple positions
     # @param positions [Array<Hash>] Array of position hashes with id and take_profit
     # @return [Array<Hash>] Array of results

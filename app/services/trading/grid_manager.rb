@@ -4,12 +4,14 @@ module TradingBot
 
     attr_reader :grid_levels, :grid_spacing, :highest_entry_price
 
-    # First trade take profit offset (changed from grid_spacing to $3)
-    FIRST_TRADE_TP_OFFSET = 3.0
-    
     # Dynamic spacing thresholds
     LARGE_GRID_THRESHOLD = 10  # Number of levels to trigger larger spacing
     LARGE_GRID_SPACING = 50.0  # Spacing when grid has >= 10 levels
+    
+    # Trailing stop constants
+    FIRST_TRADE_ACTIVATION = 5.0   # $5 activation for first trade
+    SUBSEQUENT_ACTIVATION = 28.0   # $28 activation for subsequent trades
+    TRAILING_DISTANCE = 10.0       # $10 trailing distance
 
     def initialize(config: EnvironmentConfig, api_client: nil)
       @config = config
@@ -40,28 +42,39 @@ module TradingBot
       # Sort positions by entry price (highest to lowest)
       sorted_positions = buy_positions.sort_by { |p| -p['openPrice'].to_f }
       
+      # Track highest entry price for first trade identification
+      highest_entry = sorted_positions.first['openPrice'].to_f
+      @highest_entry_price = highest_entry
+      
       # Create grid levels
       sorted_positions.each_with_index do |position_data, index|
         level_index = index + 1
         entry_price = position_data['openPrice'].to_f
-        take_profit = position_data['takeProfit']&.to_f
         
-        level = GridLevel.new(entry_price, level_index, take_profit)
+        # Create GridLevel without take profit (trailing stop strategy)
+        level = GridLevel.new(entry_price, level_index)
         
         # Create Position object and add to level
         position = Position.new(position_data)
+        
+        # Mark as first trade if this is the highest entry price
+        # Using tolerance for floating point comparison
+        if (entry_price - highest_entry).abs < 0.001
+          position.is_first_trade_in_grid = true
+        else
+          position.is_first_trade_in_grid = false
+        end
+        
         level.add_position(position)
         
         @grid_levels << level
       end
       
-      @highest_entry_price = @grid_levels.first&.entry_price
-      
-      # Recalculate take profits based on grid rules
-      recalculate_take_profits
+      # No TP recalculation needed with trailing stops
       
       Logger.info("Grid initialized with #{@grid_levels.size} levels")
       Logger.info("Grid levels: #{@grid_levels.map(&:to_s).join(', ')}")
+      Logger.info("Highest entry price: #{@highest_entry_price}")
     end
 
     # Calculate next entry price based on grid spacing
@@ -81,26 +94,45 @@ module TradingBot
     # Add a new position to the grid
     def add_position(position_data, current_price = nil)
       position = Position.new(position_data)
+      entry_price = position.open_price
+      
+      # Basic validation: entry price should be reasonable
+      if current_price
+        # For buy positions, entry should not be significantly above current price
+        # Allow some slippage but log warning if entry > current_price + 5
+        if entry_price > current_price + 5.0
+          Logger.warn("Position #{position.id} entry price #{entry_price} is significantly above current price #{current_price}")
+        end
+        
+        # Also ensure entry price isn't impossibly high
+        if entry_price > current_price * 1.05  # More than 5% above current
+          Logger.error("Position #{position.id} entry price #{entry_price} is >5% above current price #{current_price}, likely corrupted data")
+          return nil
+        end
+      end
       
       # Find or create grid level for this entry price
-      entry_price = position.open_price
       level = find_or_create_level(entry_price)
+      
+      # Mark as first trade if this is the highest entry price
+      if @grid_levels.empty? || entry_price > (@highest_entry_price || 0)
+        position.is_first_trade_in_grid = true
+        @highest_entry_price = entry_price
+      else
+        position.is_first_trade_in_grid = false
+      end
       
       # Add position to level
       level.add_position(position)
       
-      # Update highest entry price if this is a new highest level
-      if @grid_levels.empty? || entry_price > @highest_entry_price
-        @highest_entry_price = entry_price
-      end
-      
       # Sort grid levels by entry price (highest to lowest)
       @grid_levels.sort_by! { |level| -level.entry_price }
       
-      # Recalculate take profits for all levels
-      recalculate_take_profits
+      # No TP recalculation needed with trailing stops
       
       Logger.info("Added position #{position.id} to grid level #{level.level_index}")
+      Logger.info("Position #{position.id} marked as first trade: #{position.is_first_trade_in_grid}")
+      Logger.info("Entry price: #{entry_price}, Highest entry: #{@highest_entry_price}")
       
       level
     end
@@ -118,8 +150,7 @@ module TradingBot
             Logger.info("Removed empty grid level #{level.level_index}")
           end
           
-          # Recalculate take profits
-          recalculate_take_profits
+          # No TP recalculation needed with trailing stops
           return true
         end
       end
@@ -140,43 +171,17 @@ module TradingBot
       current_price <= next_entry_price + tolerance
     end
 
-    # Get the next trade to execute
+    # Get the next trade to execute (no take profit with trailing stop strategy)
     def next_trade(current_price)
       return nil unless should_place_trade?(current_price)
       
       next_entry_price = calculate_next_entry_price(current_price)
       return nil unless next_entry_price
       
-      # Calculate take profit for the new level
-      new_level_index = @grid_levels.size + 1
-      take_profit = calculate_take_profit_for_level(new_level_index, next_entry_price)
-      
       {
         entry_price: next_entry_price,
-        take_profit: take_profit,
-        level_index: new_level_index
+        level_index: @grid_levels.size + 1
       }
-    end
-
-    # Check for take profit hits and get positions to close
-    def check_take_profit_hits(current_price)
-      positions_to_close = []
-      
-      @grid_levels.each do |level|
-        if level.take_profit_hit?(current_price)
-          # Close the lowest position ID at this level (FIFO-like)
-          position_id_to_close = level.lowest_position_id
-          if position_id_to_close
-            positions_to_close << {
-              position_id: position_id_to_close,
-              level: level,
-              take_profit_price: level.take_profit_price
-            }
-          end
-        end
-      end
-      
-      positions_to_close
     end
 
     # Get all active positions
@@ -212,48 +217,12 @@ module TradingBot
       level
     end
 
-    # Recalculate take profits for all grid levels based on grid rules
-    def recalculate_take_profits
-      return if @grid_levels.empty?
-      
-      # Sort levels by entry price (highest to lowest)
-      sorted_levels = @grid_levels.sort_by { |level| -level.entry_price }
-      
-      sorted_levels.each_with_index do |level, index|
-        level_index = index + 1
-        
-        if level_index == 1
-          # First level: TP = entry + $3 (FIRST_TRADE_TP_OFFSET)
-          previous_entry = nil
-          tp_offset = FIRST_TRADE_TP_OFFSET
-        else
-          # Subsequent levels: TP = previous level's entry price
-          previous_entry = sorted_levels[index - 1].entry_price
-          tp_offset = current_grid_spacing  # Not used for levels > 1, but required parameter
-        end
-        
-        level.calculate_take_profit(previous_entry, tp_offset)
-      end
-    end
-
     # Re-index grid levels after changes
     def reindex_levels
       sorted_levels = @grid_levels.sort_by { |level| -level.entry_price }
       
       sorted_levels.each_with_index do |level, index|
         level.instance_variable_set(:@level_index, index + 1)
-      end
-    end
-
-    # Calculate take profit for a specific level
-    def calculate_take_profit_for_level(level_index, entry_price)
-      if level_index == 1
-        # First level: TP = entry + $3 (FIRST_TRADE_TP_OFFSET)
-        entry_price + FIRST_TRADE_TP_OFFSET
-      else
-        # Find the previous level's entry price
-        previous_level = @grid_levels.find { |level| level.level_index == level_index - 1 }
-        previous_level ? previous_level.entry_price : entry_price + current_grid_spacing
       end
     end
   end

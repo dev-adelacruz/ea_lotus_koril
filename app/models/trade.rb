@@ -67,14 +67,14 @@ module TradingBot
 
     # Factory method to create a buy trade for grid
     # @param entry_price [Float] Entry price (for logging purposes)
-    # @param take_profit [Float] Take profit price
+    # @param take_profit [Float, nil] Take profit price (nil for trailing stop strategy)
     # @param config [EnvironmentConfig] Configuration object
     def self.create_grid_buy(entry_price:, take_profit:, config:)
       new(
         action_type: 'ORDER_TYPE_BUY',
         symbol: config.pair_symbol,
         volume: config.lot_size,
-        take_profit: take_profit,
+        take_profit: take_profit,  # Can be nil with trailing stop strategy
         comment: config.trade_comment
       )
     end

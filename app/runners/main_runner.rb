@@ -7,6 +7,7 @@ require_relative '../../app/services/trading/api_client'
 require_relative '../../app/services/trading/grid_manager'
 require_relative '../../app/services/trading/trade_executor'
 require_relative '../../app/services/trading/position_manager'
+require_relative '../../app/services/trading/stop_manager'
 require_relative '../../app/services/analysis/price_monitor'
 
 module TradingBot
@@ -23,9 +24,13 @@ module TradingBot
       
       # Log startup information
       Logger.info("=" * 60)
-      Logger.info("Lotus Koril Trading Bot BETA 0.0.1")
+      Logger.info("Lotus Koril Trading Bot BETA 0.0.1 - TRAILING STOP STRATEGY")
       Logger.info("Grid Spacing: $#{config.grid_spacing}")
       Logger.info("Lot Size: #{config.lot_size}")
+      Logger.info("Trailing Stop Strategy: ACTIVE")
+      Logger.info("  - First Trade Activation: $5")
+      Logger.info("  - Subsequent Trades Activation: $28")
+      Logger.info("  - Trailing Distance: $10")
       Logger.info("Dry Run Mode: #{config.dry_run? ? 'ON' : 'OFF'}")
       Logger.info("Polling Interval: #{config.polling_interval} seconds")
       Logger.info("=" * 60)
@@ -73,12 +78,16 @@ module TradingBot
           # Refresh positions from API
           positions = @position_manager.refresh_positions
           
+          # Update trailing stops based on current price
+          stop_updates = @position_manager.update_trailing_stops(current_price)
+          Logger.info("Stop updates: #{stop_updates}") if stop_updates && stop_updates > 0
+          
+          # Check for stop loss hits
+          stop_hits = @position_manager.handle_stop_loss_hits(current_price)
+          Logger.info("Stop loss hits: #{stop_hits}") if stop_hits && stop_hits > 0
+          
           # Log current state
           @position_manager.log_state(current_price)
-          
-          # Handle take profit hits
-          tp_hits = @position_manager.handle_take_profit_hits(current_price)
-          Logger.info("Take profit hits: #{tp_hits}") if tp_hits > 0
           
           # Handle new trades if needed
           trade_result = @position_manager.handle_new_trades(current_price)
@@ -89,16 +98,13 @@ module TradingBot
             @position_manager.refresh_positions
           end
           
-          # Update take profits if grid changed
-          if tp_hits > 0 || trade_result
-            @position_manager.update_all_take_profits
-          end
-          
           # Log grid state
           log_grid_summary(current_price)
           
         rescue => e
           Logger.error_with_context(e, { iteration: @iteration_count })
+          # Log full backtrace for debugging
+          Logger.error("Backtrace: #{e.backtrace.join("\n")}")
           # Don't stop on error, continue with next iteration
         ensure
           # Sleep before next iteration unless we're stopping
@@ -126,13 +132,25 @@ module TradingBot
       return false if current_price.nil?
       
       positions = @position_manager.refresh_positions
+      
+      # Update trailing stops based on current price
+      stop_updates = @position_manager.update_trailing_stops(current_price)
+      Logger.info("Stop updates: #{stop_updates}") if stop_updates && stop_updates > 0
+      
+      # Check for stop loss hits
+      stop_hits = @position_manager.handle_stop_loss_hits(current_price)
+      Logger.info("Stop loss hits: #{stop_hits}") if stop_hits && stop_hits > 0
+      
+      # Log current state
       @position_manager.log_state(current_price)
       
-      tp_hits = @position_manager.handle_take_profit_hits(current_price)
+      # Handle new trades if needed
       trade_result = @position_manager.handle_new_trades(current_price)
-      
-      if tp_hits > 0 || trade_result
-        @position_manager.update_all_take_profits
+      if trade_result
+        Logger.info("Trade placed: #{trade_result}")
+        
+        # After placing trade, refresh positions to capture it
+        @position_manager.refresh_positions
       end
       
       log_grid_summary(current_price)
@@ -165,7 +183,7 @@ module TradingBot
       Logger.info("Current Price: #{current_price}")
       Logger.info("Next Entry Price: #{next_entry}")
       
-      if next_entry
+      if next_entry && current_price
         distance_to_next = current_price - next_entry
         if distance_to_next <= 0
           Logger.info("READY FOR NEXT TRADE (price at or below next entry)")

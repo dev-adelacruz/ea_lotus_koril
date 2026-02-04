@@ -1,6 +1,7 @@
 module TradingBot
   class Position
     attr_reader :id, :type, :symbol, :open_price, :take_profit, :volume, :current_price, :profit
+    attr_accessor :stop_loss, :highest_price_since_entry, :is_first_trade_in_grid
 
     # Initialize from API response hash
     def initialize(api_data)
@@ -12,6 +13,11 @@ module TradingBot
       @volume = api_data['volume'].to_f
       @current_price = api_data['currentPrice']&.to_f
       @profit = api_data['profit']&.to_f
+      
+      # Trailing stop fields
+      @stop_loss = nil
+      @highest_price_since_entry = @open_price  # Track highest price for trailing
+      @is_first_trade_in_grid = false  # Will be set by GridManager
     end
 
     # Check if this is a buy position
@@ -51,7 +57,64 @@ module TradingBot
       profit.to_f > 0
     end
 
-    # Convert back to API format for updates
+    # Check if stop loss has been hit
+    def stop_loss_hit?(current_price)
+      return false unless stop_loss && current_price
+      
+      if buy?
+        current_price <= stop_loss
+      else
+        current_price >= stop_loss
+      end
+    end
+
+    # Update highest price since entry for trailing stop calculation
+    def update_highest_price(current_price)
+      return unless current_price
+      
+      if buy?
+        @highest_price_since_entry = [@highest_price_since_entry, current_price].max
+      else
+        # For sell positions, track lowest price
+        @highest_price_since_entry = [@highest_price_since_entry, current_price].min
+      end
+    end
+
+    # Calculate activation threshold based on position type and first trade flag
+    def activation_threshold
+      if is_first_trade_in_grid
+        5.0  # First trade: $5 activation
+      else
+        28.0 # Subsequent trades: $28 activation
+      end
+    end
+
+    # Check if price has reached activation level
+    def reached_activation_level?(current_price)
+      return false unless current_price
+      
+      threshold = activation_threshold
+      return false unless threshold
+      
+      if buy?
+        current_price >= open_price + threshold
+      else
+        current_price <= open_price - threshold
+      end
+    end
+
+    # Check if trailing stop should be updated (price moved $10 above current stop)
+    def should_update_trailing_stop?(current_price)
+      return false unless stop_loss && current_price
+      
+      if buy?
+        current_price >= stop_loss + 10.0
+      else
+        current_price <= stop_loss - 10.0
+      end
+    end
+
+    # Convert back to API format for updates (including stop loss)
     def to_api_format
       {
         'id' => id,
@@ -59,13 +122,15 @@ module TradingBot
         'symbol' => symbol,
         'openPrice' => open_price,
         'takeProfit' => take_profit,
+        'stopLoss' => stop_loss,
         'volume' => volume
       }
     end
 
-    # String representation
+    # String representation with stop loss info
     def to_s
-      "#{buy? ? 'BUY' : 'SELL'} #{symbol} @ #{open_price}, TP: #{take_profit}, Profit: #{profit}"
+      stop_str = stop_loss ? "SL: #{stop_loss}" : "SL: None"
+      "#{buy? ? 'BUY' : 'SELL'} #{symbol} @ #{open_price}, TP: #{take_profit}, #{stop_str}, Profit: #{profit}"
     end
   end
 end

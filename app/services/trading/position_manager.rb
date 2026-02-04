@@ -1,12 +1,14 @@
 module TradingBot
   class PositionManager
-    attr_reader :api_client, :grid_manager, :trade_executor, :config
+    attr_reader :api_client, :grid_manager, :trade_executor, :stop_manager, :config
 
     def initialize(api_client:, grid_manager:, trade_executor:, config: EnvironmentConfig)
       @api_client = api_client
       @grid_manager = grid_manager
       @trade_executor = trade_executor
       @config = config
+      @stop_manager = StopManager.new(trade_executor: trade_executor)
+      @recently_stopped_positions = {}  # position_id => timestamp
     end
 
     # Fetch and process current positions
@@ -51,24 +53,57 @@ module TradingBot
       api_client.get_current_price
     end
 
-    # Check for and handle take profit hits
-    def handle_take_profit_hits(current_price)
+    # Update trailing stops based on current price
+    # This should be called on each price update
+    def update_trailing_stops(current_price)
       return unless current_price
       
-      positions_to_close = grid_manager.check_take_profit_hits(current_price)
+      positions = grid_manager.active_positions
+      return if positions.empty?
       
-      positions_to_close.each do |tp_info|
-        position_id = tp_info[:position_id]
-        level = tp_info[:level]
+      # Initialize first trade flags for stop manager
+      stop_manager.initialize_first_trade_flags(positions, grid_manager.grid_levels)
+      
+      # Update trailing stops
+      update_results = stop_manager.update_trailing_stops(positions, current_price)
+      
+      # Log updates
+      update_results.each do |result|
+        case result[:action]
+        when 'activated'
+          Logger.info("Stop activated for position #{result[:position_id]} at #{result[:stop_price]} (threshold: #{result[:threshold]})")
+        when 'trailed'
+          Logger.info("Stop trailed for position #{result[:position_id]}: #{result[:old_stop]} -> #{result[:new_stop]} (+#{result[:move_distance]})")
+        end
+      end
+      
+      update_results.size
+    end
+
+    # Check for and handle stop loss hits
+    def handle_stop_loss_hits(current_price)
+      return 0 unless current_price
+      
+      positions = grid_manager.active_positions
+      return 0 if positions.empty?
+      
+      positions_to_close = stop_manager.check_stop_loss_hits(positions, current_price)
+      
+      positions_to_close.each do |stop_info|
+        position = stop_info[:position]
         
-        Logger.info("Take profit hit for position #{position_id} at level #{level.level_index}")
+        Logger.info("Stop loss hit for position #{position.id} at #{stop_info[:stop_price]} (current: #{stop_info[:current_price]})")
         
-        # Close the position (in real trading, this would be automatic when TP hits)
-        # For our purposes, we just remove it from grid tracking
-        grid_manager.remove_position(position_id)
+        # Remove from grid
+        grid_manager.remove_position(position.id)
         
-        # Try to replace the position if market is still at entry level
-        trade_executor.replace_position_at_level(level, current_price)
+        # Track recently stopped position to handle API latency
+        @recently_stopped_positions[position.id] = Time.now
+        Logger.debug("Tracked recently stopped position #{position.id}")
+        
+        # Note: With trailing stop strategy, we don't immediately replace positions
+        # New positions will be created based on grid spacing rules
+        Logger.info("Position #{position.id} closed via stop loss. Profit/Loss: #{position.profit}")
       end
       
       positions_to_close.size
@@ -81,12 +116,14 @@ module TradingBot
       next_trade = grid_manager.next_trade(current_price)
       return unless next_trade
       
-      Logger.info("Placing new trade at level #{next_trade[:level_index]}: Entry=#{next_trade[:entry_price]}, TP=#{next_trade[:take_profit]}")
+      Logger.info("Placing new trade at level #{next_trade[:level_index]}: Entry=#{next_trade[:entry_price]}")
       
-      # Execute the trade
+      # Execute the trade WITHOUT take profit (trailing stop strategy)
+      # Note: We need to modify Trade model to support trades without TP
+      # For now, we'll pass nil for take_profit
       result = trade_executor.execute_grid_buy(
         entry_price: next_trade[:entry_price],
-        take_profit: next_trade[:take_profit]
+        take_profit: nil  # No TP with trailing stop strategy
       )
       
       # If trade was successful (or dry-run), we need to add it to grid
@@ -95,46 +132,25 @@ module TradingBot
       result
     end
 
-    # Update take profits for all positions based on current grid state
-    def update_all_take_profits
-      positions_to_update = []
-      
-      grid_manager.grid_levels.each do |level|
-        level.positions.each do |position|
-          positions_to_update << {
-            id: position.id,
-            take_profit: level.take_profit_price
-          }
-        end
-      end
-      
-      return if positions_to_update.empty?
-      
-      Logger.info("Updating take profits for #{positions_to_update.size} positions")
-      results = trade_executor.update_positions_take_profits(positions_to_update)
-      
-      # Log results
-      successful = results.count { |r| r[:success] }
-      failed = results.count { |r| !r[:success] }
-      
-      if failed > 0
-        Logger.warn("Failed to update #{failed} position(s)")
-      end
-      
-      results
-    end
-
     # Get grid state for logging
     def grid_state
       grid_manager.grid_state
     end
 
-    # Log current state
+    # Log current state with stop loss information
     def log_state(current_price)
       positions = grid_manager.active_positions
       next_entry_price = grid_manager.calculate_next_entry_price(current_price)
       
+      # Log basic grid state
       Logger.grid_state(positions.map(&:to_api_format), current_price, next_entry_price)
+      
+      # Log detailed position info with stops
+      positions.each do |position|
+        stop_info = position.stop_loss ? "SL: #{position.stop_loss}" : "SL: None (needs +#{position.activation_threshold})"
+        entry_diff = current_price ? (current_price - position.open_price).round(2) : "N/A"
+        Logger.info("  Position #{position.id}: Entry #{position.open_price} (#{entry_diff}), #{stop_info}, P&L: #{position.profit}")
+      end
       
       # Log grid levels
       grid_manager.grid_levels.each do |level|
@@ -144,14 +160,14 @@ module TradingBot
 
     private
 
-    # Create a simulated position for dry-run mode
+    # Create a simulated position for dry-run mode (without TP)
     def create_simulated_position
       {
         'id' => 'dry-run-simulated-1',
         'type' => 'POSITION_TYPE_BUY',
         'symbol' => config.pair_symbol,
         'openPrice' => 4881.0,  # Starting price of PriceMonitor simulation
-        'takeProfit' => 4881.0 + config.grid_spacing,  # TP = entry + grid_spacing
+        'takeProfit' => nil,  # No TP with trailing stop strategy
         'volume' => config.lot_size,
         'currentPrice' => 4881.0,
         'profit' => 0.0
@@ -163,6 +179,27 @@ module TradingBot
       current_position_ids = grid_manager.active_positions.map(&:id)
       api_position_ids = api_positions.map { |p| p['id'] }
       
+      # Filter out recently stopped positions to handle API latency
+      current_time = Time.now
+      api_positions_filtered = api_positions.reject do |p|
+        position_id = p['id']
+        if @recently_stopped_positions[position_id]
+          # Keep for 30 seconds after stop, then allow re-addition if still in API
+          if current_time - @recently_stopped_positions[position_id] > 30
+            @recently_stopped_positions.delete(position_id)
+            false
+          else
+            Logger.debug("Filtering out recently stopped position #{position_id}")
+            true
+          end
+        else
+          false
+        end
+      end
+      
+      # Update API position IDs after filtering
+      api_position_ids = api_positions_filtered.map { |p| p['id'] }
+      
       # Find positions that are in grid but not in API (closed positions)
       closed_position_ids = current_position_ids - api_position_ids
       closed_position_ids.each do |position_id|
@@ -173,7 +210,7 @@ module TradingBot
       # Find positions that are in API but not in grid (new positions)
       new_position_ids = api_position_ids - current_position_ids
       new_position_ids.each do |position_id|
-        position_data = api_positions.find { |p| p['id'] == position_id }
+        position_data = api_positions_filtered.find { |p| p['id'] == position_id }
         if position_data
           grid_manager.add_position(position_data)
           Logger.info("Added new position #{position_id} to grid")

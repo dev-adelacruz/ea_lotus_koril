@@ -61,6 +61,19 @@ module TradingBot
       place_trade(trade_data)
     end
 
+    # Update a position's stop loss
+    # Note: This assumes the API supports stop loss updates via POSITION_MODIFY
+    # with a "stopLoss" field. If not, this will need to be adjusted.
+    def update_position_stop_loss(position_id, stop_loss)
+      trade_data = {
+        "actionType" => "POSITION_MODIFY",
+        "positionId" => position_id,
+        "stopLoss" => stop_loss
+      }.to_json
+
+      place_trade(trade_data)
+    end
+
     private
 
     # Make HTTP request with retry logic
@@ -98,14 +111,30 @@ module TradingBot
       end
     end
 
-    # Parse API response
+    # Parse API response and check for errors
     def parse_response(response)
       return nil if response.body.nil? || response.body.strip.empty?
       
-      JSON.parse(response.body)
+      parsed = JSON.parse(response.body)
+      
+      # Check for error codes in MetaTrader API responses
+      # Success code: 10009 (TRADE_RETCODE_DONE)
+      # Error codes: 10016 (TRADE_RETCODE_INVALID_STOPS), etc.
+      if parsed.is_a?(Hash) && parsed.key?('numericCode')
+        numeric_code = parsed['numericCode']
+        
+        # Check if this is an error response
+        if numeric_code != 10009  # Not success
+          error_message = parsed['message'] || parsed['stringCode'] || "API error #{numeric_code}"
+          Logger.error("API error response: #{parsed}")
+          raise ApiError, error_message
+        end
+      end
+      
+      parsed
     rescue JSON::ParserError => e
       Logger.error("Failed to parse JSON response: #{e.message}")
-      nil
+      raise ApiError, "Invalid JSON response: #{e.message}"
     end
 
     # Handle RestClient errors
@@ -115,6 +144,18 @@ module TradingBot
       case error.http_code
       when 401, 403
         raise AuthenticationError, "Authentication failed: #{error.message}"
+      when 400, 422  # Bad Request, Unprocessable Entity - client errors, don't retry
+        # Parse the error response for more details
+        error_details = "Client error (#{error.http_code}): #{error.message}"
+        begin
+          if error.response&.body
+            parsed = JSON.parse(error.response.body)
+            error_details = "Client error (#{error.http_code}): #{parsed['message'] || parsed['stringCode'] || error.message}"
+          end
+        rescue JSON::ParserError
+          # Ignore JSON parsing errors
+        end
+        raise ApiError, error_details
       when 429
         Logger.warn("Rate limit exceeded, retrying...")
         sleep(2 * (retry_count + 1))
@@ -122,12 +163,8 @@ module TradingBot
         Logger.warn("Server error (#{error.http_code}), retrying...")
         sleep(@server_error_delay * (retry_count + 1))
       else
-        Logger.error_with_context(error, { 
-          method: method, 
-          url: url, 
-          http_code: error.http_code,
-          response_body: error.response&.body
-        })
+        # For other 4xx errors and unknown errors, raise immediately
+        raise ApiError, "API error (#{error.http_code}): #{error.message}"
       end
     end
 
