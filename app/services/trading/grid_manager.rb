@@ -83,6 +83,19 @@ module TradingBot
     def calculate_next_entry_price(current_price = nil)
       if @grid_levels.empty?
         # First trade: place immediately at current market price
+        # Warn if we had positions before and price has moved significantly
+        if @highest_entry_price && current_price
+          price_move = (@highest_entry_price - current_price).abs
+          max_reasonable_move = current_grid_spacing * 5  # 5 grid levels
+          
+          if price_move > max_reasonable_move
+            Logger.warn("Grid restart: Price moved #{price_move.round(2)} from last highest entry #{@highest_entry_price} to #{current_price}")
+            Logger.warn("This exceeds reasonable move of #{max_reasonable_move} (#{current_grid_spacing} * 5)")
+          else
+            Logger.info("Grid restart at current price #{current_price} (moved #{price_move.round(2)} from last highest entry)")
+          end
+        end
+        
         return current_price
       else
         # Subsequent trades: current_grid_spacing below the lowest (most recent) entry price
@@ -165,10 +178,17 @@ module TradingBot
       next_entry_price = calculate_next_entry_price(current_price)
       return false unless next_entry_price
       
-      # For first trade (empty grid), allow small tolerance for floating point
-      # For subsequent trades, require price <= entry
-      tolerance = @grid_levels.empty? ? 0.001 : 0
-      current_price <= next_entry_price + tolerance
+      # Allow small tolerance for floating point precision issues
+      tolerance = 0.001
+      should_place = current_price <= next_entry_price + tolerance
+      
+      # Debug logging for trade decisions
+      if Logger.debug?
+        diff = (current_price - next_entry_price).abs
+        Logger.debug("Trade decision: current_price=#{current_price}, next_entry=#{next_entry_price}, diff=#{diff}, tolerance=#{tolerance}, should_place=#{should_place}")
+      end
+      
+      should_place
     end
 
     # Get the next trade to execute (no take profit with trailing stop strategy)
@@ -219,9 +239,11 @@ module TradingBot
 
     # Re-index grid levels after changes
     def reindex_levels
-      sorted_levels = @grid_levels.sort_by { |level| -level.entry_price }
+      # Sort levels by entry price (highest to lowest) and reassign
+      @grid_levels.sort_by! { |level| -level.entry_price }
       
-      sorted_levels.each_with_index do |level, index|
+      # Update level indices
+      @grid_levels.each_with_index do |level, index|
         level.instance_variable_set(:@level_index, index + 1)
       end
     end

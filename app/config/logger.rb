@@ -37,6 +37,11 @@ module TradingBot
         log(message, :debug) if ENV['DEBUG'] == 'true'
       end
 
+      # Check if debug logging is enabled
+      def debug?
+        ENV['DEBUG'] == 'true'
+      end
+
       # Log grid state snapshot
       def grid_state(positions, current_price, next_entry_price)
         info("=== GRID STATE SNAPSHOT ===")

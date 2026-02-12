@@ -101,9 +101,13 @@ module TradingBot
         @recently_stopped_positions[position.id] = Time.now
         Logger.debug("Tracked recently stopped position #{position.id}")
         
-        # Note: With trailing stop strategy, we don't immediately replace positions
-        # New positions will be created based on grid spacing rules
         Logger.info("Position #{position.id} closed via stop loss. Profit/Loss: #{position.profit}")
+      end
+      
+      # Check if grid is now empty and try to place immediate trade
+      if positions_to_close.size > 0 && grid_manager.active_positions.empty?
+        Logger.info("All positions stopped out. Attempting to restart grid at current price #{current_price}")
+        handle_new_trades(current_price)
       end
       
       positions_to_close.size
