@@ -1,11 +1,12 @@
 module TradingBot
   class PriceMonitor
-    attr_reader :api_client, :polling_interval, :last_price, :price_history, :config
+    attr_reader :api_client, :polling_interval, :last_price, :price_history, :config, :position_manager
 
-    def initialize(api_client:, polling_interval: 10, config: EnvironmentConfig)
+    def initialize(api_client:, polling_interval: 10, config: EnvironmentConfig, position_manager: nil)
       @api_client = api_client
       @polling_interval = polling_interval
       @config = config
+      @position_manager = position_manager
       @last_price = nil
       @price_history = []  # Simple history for basic analysis
       @max_history_size = 100
@@ -13,20 +14,28 @@ module TradingBot
     end
 
     # Get current price with caching
-    def current_price(refresh: true)
+    def current_price(refresh: true, positions: nil)
       if refresh || @last_price.nil?
-        refresh_price
+        refresh_price(positions)
       end
       @last_price
     end
 
     # Refresh price from API or simulate in dry-run mode
-    def refresh_price
+    def refresh_price(positions = nil)
       if config.dry_run?
         price = simulate_price
         TradingBot::Logger.info("[DRY RUN] Simulated price: #{price.round(2)}")
       else
-        price = api_client.get_current_price
+        # Try to get price from multiple sources for better accuracy
+        price = get_current_price_from_best_source(positions)
+        
+        # Log which source we're using
+        if price
+          TradingBot::Logger.debug("PriceMonitor: Got price #{price.round(2)} from best available source")
+        else
+          TradingBot::Logger.warn("PriceMonitor: Could not get price from any source")
+        end
       end
       
       if price
@@ -34,6 +43,69 @@ module TradingBot
         add_to_history(price)
       end
       price
+    end
+    
+    # Try multiple sources to get the most accurate current price
+    def get_current_price_from_best_source(positions = nil)
+      # Source 1: Try to get price from positions (most accurate when we have positions)
+      price_from_positions = get_price_from_active_positions(positions)
+      return price_from_positions if price_from_positions
+      
+      # Source 2: Fall back to candle data
+      price_from_candles = api_client.get_current_price
+      return price_from_candles if price_from_candles
+      
+      nil
+    end
+    
+    # Get current price from active positions (most accurate source when available)
+    def get_price_from_active_positions(positions = nil)
+      return nil unless @position_manager
+      
+      # Use provided positions or fetch fresh ones if not provided
+      if positions.nil?
+        positions = @position_manager.refresh_positions
+      end
+      
+      return nil if positions.nil? || positions.empty?
+      
+      # Extract current prices from positions
+      current_prices = positions.map do |position|
+        # Handle both Position objects and API hash responses
+        if position.is_a?(Hash)
+          position['currentPrice']&.to_f
+        else
+          position.current_price
+        end
+      end.compact
+      
+      return nil if current_prices.empty?
+      
+      # Use median price to avoid outliers
+      median_price = calculate_median(current_prices)
+      
+      # Log price source and values for debugging
+      TradingBot::Logger.debug("PriceMonitor: Got price #{median_price.round(2)} from #{current_prices.size} positions")
+      TradingBot::Logger.debug("Position prices: #{current_prices.map { |p| p.round(2) }.join(', ')}")
+      
+      median_price
+    rescue => e
+      TradingBot::Logger.error_with_context(e, { context: 'Failed to get price from positions' })
+      nil
+    end
+    
+    # Calculate median of an array of numbers
+    def calculate_median(numbers)
+      return nil if numbers.empty?
+      
+      sorted = numbers.sort
+      len = sorted.length
+      
+      if len.odd?
+        sorted[len / 2]
+      else
+        (sorted[len / 2 - 1] + sorted[len / 2]) / 2.0
+      end
     end
 
     # Simulate a moving market for dry-run mode

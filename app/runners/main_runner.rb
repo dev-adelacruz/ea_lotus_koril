@@ -48,7 +48,8 @@ module TradingBot
       @price_monitor = PriceMonitor.new(
         api_client: @api_client,
         polling_interval: config.polling_interval,
-        config: config
+        config: config,
+        position_manager: @position_manager
       )
       
       @running = true
@@ -66,17 +67,17 @@ module TradingBot
           @iteration_count += 1
           Logger.info("Iteration #{@iteration_count}")
           
-          # Refresh current price
-          current_price = @price_monitor.current_price(refresh: true)
+          # Refresh positions from API (single call for entire iteration)
+          positions = @position_manager.refresh_positions
+          
+          # Get current price using the positions we just fetched (eliminates duplicate API call)
+          current_price = @price_monitor.current_price(refresh: true, positions: positions)
           
           if current_price.nil?
             Logger.error("Failed to get current price, skipping iteration")
             sleep(config.polling_interval)
             next
           end
-          
-          # Refresh positions from API
-          positions = @position_manager.refresh_positions
           
           # Update trailing stops based on current price
           stop_updates = @position_manager.update_trailing_stops(current_price)
@@ -128,10 +129,12 @@ module TradingBot
     def run_once
       Logger.info("Running single iteration...")
       
-      current_price = @price_monitor.current_price(refresh: true)
-      return false if current_price.nil?
-      
+      # Refresh positions from API (single call for entire iteration)
       positions = @position_manager.refresh_positions
+      
+      # Get current price using the positions we just fetched (eliminates duplicate API call)
+      current_price = @price_monitor.current_price(refresh: true, positions: positions)
+      return false if current_price.nil?
       
       # Update trailing stops based on current price
       stop_updates = @position_manager.update_trailing_stops(current_price)
