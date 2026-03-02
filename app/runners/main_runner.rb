@@ -168,7 +168,7 @@ module TradingBot
         running: @running,
         grid_levels: @grid_manager.grid_levels.size,
         active_positions: @grid_manager.active_positions.size,
-        current_price: @price_monitor.current_price(refresh: false),
+        current_price: @price_monitor.current_price(refresh: true),  # Always fetch fresh price
         dry_run: config.dry_run?
       }
     end
