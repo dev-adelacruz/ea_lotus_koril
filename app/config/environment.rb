@@ -54,6 +54,11 @@ module TradingBot
         ENV['TRADE_COMMENT'] || 'Lotus Koril BETA 0.0.1'
       end
 
+      # Trade safety configuration
+      def trade_disabled?
+        ENV['TRADE_DISABLED']&.downcase == 'true'
+      end
+
       # Validation
       def validate!
         required_vars = ['API_KEY', 'ACCOUNT_ID', 'REGION_BASE_URL', 'REGION_MARKET_BASE_URL']

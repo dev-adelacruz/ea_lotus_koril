@@ -12,10 +12,10 @@ module TradingBot
     end
 
     # Get current price - ALWAYS FETCHES FRESH, NO CACHING
-    def current_price(refresh: true, positions: nil)
+    def current_price(refresh: true, positions: nil, force_cache_bust: false)
       # 'refresh' parameter is ignored - always fetches fresh price
       # Log that we're fetching fresh price
-      TradingBot::Logger.debug("PriceMonitor: Fetching fresh price (caching disabled)")
+      TradingBot::Logger.debug("PriceMonitor: Fetching fresh price (caching disabled, force_cache_bust: #{force_cache_bust})")
       
       # Record when we started fetching
       fetch_start_time = Time.now
@@ -26,7 +26,7 @@ module TradingBot
         @last_price_fetch_time = Time.now
       else
         # Try to get price from multiple sources for best accuracy
-        price = get_current_price_from_best_source(positions)
+        price = get_current_price_from_best_source(positions, force_cache_bust)
         
         # Log which source we're using and timestamp
         if price
@@ -53,13 +53,13 @@ module TradingBot
     end
     
     # Try multiple sources to get the most accurate current price
-    def get_current_price_from_best_source(positions = nil)
+    def get_current_price_from_best_source(positions = nil, force_cache_bust = false)
       # Source 1: Try to get price from positions (most accurate when we have positions)
       price_from_positions = get_price_from_active_positions(positions)
       return price_from_positions if price_from_positions
       
       # Source 2: Fall back to candle data
-      price_from_candles = api_client.get_current_price
+      price_from_candles = api_client.get_current_price(cache_bust: force_cache_bust)
       return price_from_candles if price_from_candles
       
       nil
@@ -124,6 +124,55 @@ module TradingBot
       # Keep price in reasonable range
       @simulated_price = [@simulated_price, 100.0].max  # Don't go below 100
       @simulated_price.round(2)
+    end
+
+    # Clear any cached price data and force fresh fetch
+    def clear_cache!
+      TradingBot::Logger.info("PriceMonitor: Clearing all cached price data")
+      @last_price_fetch_time = nil
+      
+      if config.dry_run?
+        TradingBot::Logger.info("PriceMonitor: Resetting simulated price to 2200.0")
+        @simulated_price = 2200.0
+      end
+      
+      true
+    end
+
+    # Force refresh with cache busting
+    def force_refresh(positions = nil)
+      TradingBot::Logger.info("PriceMonitor: Force refreshing price with cache busting")
+      current_price(refresh: true, positions: positions, force_cache_bust: true)
+    end
+
+    # Get price with cache busting (one-time forced refresh)
+    def current_price_with_cache_bust(positions = nil)
+      TradingBot::Logger.info("PriceMonitor: Getting price with cache busting")
+      current_price(refresh: true, positions: positions, force_cache_bust: true)
+    end
+
+    # Check if price data is stale (older than threshold seconds)
+    def price_stale?(threshold_seconds = 300)  # default 5 minutes
+      return true if @last_price_fetch_time.nil?
+      
+      age_seconds = Time.now - @last_price_fetch_time
+      stale = age_seconds > threshold_seconds
+      
+      if stale
+        TradingBot::Logger.warn("PriceMonitor: Price data is stale! Last fetch: #{@last_price_fetch_time}, Age: #{age_seconds.round(0)} seconds")
+      end
+      
+      stale
+    end
+
+    # Get cache status information
+    def cache_status
+      {
+        last_price_fetch_time: @last_price_fetch_time,
+        price_stale: price_stale?,
+        dry_run: config.dry_run?,
+        simulated_price: config.dry_run? ? @simulated_price : nil
+      }
     end
   end
 end

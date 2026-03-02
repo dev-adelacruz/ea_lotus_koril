@@ -14,6 +14,13 @@ module TradingBot
     # @param trade [Trade] The trade to execute
     # @return [Hash, nil] API response or nil in dry-run mode
     def execute(trade)
+      # Check if trades are disabled globally
+      if config.trade_disabled?
+        Logger.warn("TRADES DISABLED: Would execute trade but trades are disabled via TRADE_DISABLED environment variable")
+        Logger.warn("Trade details: #{trade}")
+        return { 'trades_disabled' => true, 'trade' => trade.to_s, 'action' => 'blocked' }
+      end
+      
       if dry_run
         Logger.trade_executed(
           trade.buy? ? 'BUY' : 'SELL',

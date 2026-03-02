@@ -39,12 +39,45 @@ module TradingBot
     end
 
     # Get current price (latest candle close)
-    def get_current_price
-      candles = get_candles('1m')
+    def get_current_price(cache_bust: false)
+      url = "#{config.region_market_base_url}/users/current/accounts/#{config.account_id}/historical-market-data/symbols/#{config.pair_symbol}/timeframes/1m/candles"
+      
+      # Add cache busting parameter if requested
+      if cache_bust
+        timestamp = Time.now.to_i
+        url = "#{url}?cache_bust=#{timestamp}"
+        Logger.debug("Cache busting enabled for price request: #{timestamp}")
+      end
+      
+      Logger.debug("Fetching current price from: #{url}")
+      candles = make_request(:get, url)
       return nil if candles.nil? || candles.empty?
       
+      # Log candle details for debugging
+      latest_candle = candles.last
+      if latest_candle
+        close_price = latest_candle['close'].to_f
+        open_time = latest_candle['openTime'] rescue nil
+        close_time = latest_candle['closeTime'] rescue nil
+        
+        Logger.debug("Latest candle: close=#{close_price}, openTime=#{open_time}, closeTime=#{close_time}")
+        
+        # Check if candle is recent (within last 5 minutes)
+        if close_time
+          candle_time = Time.parse(close_time) rescue nil
+          if candle_time
+            age_seconds = Time.now - candle_time
+            if age_seconds > 300  # 5 minutes
+              Logger.warn("Candle data is stale! Age: #{age_seconds.round(0)} seconds")
+            else
+              Logger.debug("Candle data is recent (age: #{age_seconds.round(1)} seconds)")
+            end
+          end
+        end
+      end
+      
       # Return the close price of the latest candle
-      candles.last['close'].to_f
+      latest_candle['close'].to_f
     rescue => e
       Logger.error_with_context(e, { context: 'Failed to get current price' })
       nil
@@ -72,6 +105,43 @@ module TradingBot
       }.to_json
 
       place_trade(trade_data)
+    end
+
+    # Clear any HTTP client caching and reset connection state
+    def clear_cache!
+      Logger.info("ApiClient: Clearing HTTP client cache and resetting connection state")
+      
+      # Clear any RestClient connection caching
+      # Note: RestClient doesn't have a built-in cache clear, but we can
+      # reinitialize headers or take other actions
+      
+      # Add cache busting headers for future requests
+      @headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+      @headers['Pragma'] = 'no-cache'
+      @headers['Expires'] = '0'
+      
+      Logger.info("ApiClient: Cache headers updated for future requests")
+      true
+    end
+
+    # Force refresh with cache busting for specific endpoints
+    def force_refresh_positions
+      Logger.info("ApiClient: Force refreshing positions with cache busting")
+      url = "#{config.region_base_url}/users/current/accounts/#{config.account_id}/positions"
+      timestamp = Time.now.to_i
+      url_with_cache_bust = "#{url}?cache_bust=#{timestamp}"
+      
+      Logger.debug("Cache busting positions request: #{timestamp}")
+      make_request(:get, url_with_cache_bust)
+    end
+
+    # Get cache status
+    def cache_status
+      {
+        cache_headers_enabled: @headers.key?('Cache-Control'),
+        last_cache_clear_time: Time.now,  # We don't track this, but could add
+        max_retries: @max_retries
+      }
     end
 
     private

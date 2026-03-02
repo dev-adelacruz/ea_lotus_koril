@@ -32,6 +32,7 @@ module TradingBot
       Logger.info("  - Subsequent Trades Activation: $28")
       Logger.info("  - Trailing Distance: $10")
       Logger.info("Dry Run Mode: #{config.dry_run? ? 'ON' : 'OFF'}")
+      Logger.info("Trade Disabled: #{config.trade_disabled? ? 'YES (SAFETY)' : 'NO'}")
       Logger.info("Polling Interval: #{config.polling_interval} seconds")
       Logger.info("=" * 60)
       
@@ -169,8 +170,61 @@ module TradingBot
         grid_levels: @grid_manager.grid_levels.size,
         active_positions: @grid_manager.active_positions.size,
         current_price: @price_monitor.current_price(refresh: true),  # Always fetch fresh price
-        dry_run: config.dry_run?
+        dry_run: config.dry_run?,
+        trade_disabled: config.trade_disabled?,
+        price_cache_status: @price_monitor.cache_status,
+        api_cache_status: @api_client.cache_status
       }
+    end
+
+    # Clear all caches and force fresh data
+    def clear_all_caches
+      Logger.info("MainRunner: Clearing all caches...")
+      
+      results = {
+        price_monitor: @price_monitor.clear_cache!,
+        api_client: @api_client.clear_cache!,
+        timestamp: Time.now
+      }
+      
+      Logger.info("MainRunner: All caches cleared successfully")
+      results
+    end
+
+    # Force refresh of all data with cache busting
+    def force_refresh_all
+      Logger.info("MainRunner: Force refreshing all data with cache busting...")
+      
+      # Clear caches first
+      clear_all_caches
+      
+      # Force refresh positions
+      positions_result = @api_client.force_refresh_positions rescue nil
+      
+      # Force refresh price with cache busting
+      price_result = @price_monitor.force_refresh
+      
+      results = {
+        positions_refreshed: positions_result != nil,
+        price_refreshed: price_result != nil,
+        positions: positions_result,
+        price: price_result,
+        timestamp: Time.now
+      }
+      
+      Logger.info("MainRunner: Force refresh completed")
+      results
+    end
+
+    # Get price with cache busting (one-time forced refresh)
+    def get_price_with_cache_bust
+      Logger.info("MainRunner: Getting price with cache busting")
+      @price_monitor.current_price_with_cache_bust
+    end
+
+    # Check if price data is stale
+    def price_stale?(threshold_seconds = 300)
+      @price_monitor.price_stale?(threshold_seconds)
     end
 
     private
